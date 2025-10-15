@@ -1,26 +1,44 @@
 {
   "project_info": {
-    "project_number": "1000599609855",
-    "project_id": "greasing-the-groove-34f0a",
-    "storage_bucket": "greasing-the-groove-34f0a.firebasestorage.app"
+    "project_number": "598887658009",
+    "project_id": "greasing-the-groove-1af7b",
+    "storage_bucket": "greasing-the-groove-1af7b.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1000599609855:android:2a706e7b1a1ae7eb9507ca",
+        "mobilesdk_app_id": "1:598887658009:android:a43f361ba553f3812db088",
         "android_client_info": {
-          "package_name": "com.charlesq.greasing_the_groove"
+          "package_name": "com.charlesq.greasingthegroove"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "598887658009-2v300m67072i4a795jpag0i63cicb23c.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.charlesq.greasingthegroove",
+            "certificate_hash": "ac5fc8d9eb9ed1b203b1855ca08fc08175a257ea"
+          }
+        },
+        {
+          "client_id": "598887658009-capurkdetkubls2viiso7mk6m5sr7q71.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyBOAkktgbkZadlZ_7l4Z_vxTr88s7bxQ0s"
+          "current_key": "AIzaSyCy7ysnCqpDzgCtSnH6oXWlG-q52s356Ik"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "598887658009-capurkdetkubls2viiso7mk6m5sr7q71.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

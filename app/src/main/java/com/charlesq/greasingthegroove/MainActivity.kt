@@ -1,8 +1,12 @@
 package com.charlesq.greasingthegroove
 
+import android.annotation.SuppressLint
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -15,137 +19,180 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.charlesq.greasingthegroove.ui.theme.GreasingTheGrooveTheme
-import java.util.Date
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
+import com.kizitonwose.calendar.compose.HorizontalCalendar
+import com.kizitonwose.calendar.compose.rememberCalendarState
+import com.kizitonwose.calendar.core.CalendarDay
+import com.kizitonwose.calendar.core.firstDayOfWeekFromLocale
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.time.Instant
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.format.TextStyle
+import java.util.Locale
 
-// --- Data Models based on PRD Section 4.2 ---
-
-// Represents the static definition of an exercise.
-// From Firestore Collection: /exercises
-data class Exercise(
-    val id: String = "",
-    val name: String = "",
-    val exerciseMode: String = "REPS", // 'REPS' or 'DURATION'
-    val isCustom: Boolean = false,
-    val lastReps: Int? = null,
-    val lastWeightAdded: Double? = null,
-    val lastDurationSeconds: Int? = null,
-    val dateCreated: Date = Date()
-)
-
-// Represents the user's active daily goal for a specific exercise.
-// From Firestore Collection: /activeGoals
-data class ActiveGoal(
-    val exerciseId: String = "",
-    val dailyTargetSets: Int? = null,
-    val dailyTargetDurationSeconds: Int? = null,
-    val dateSet: Date = Date()
-)
-
-// Represents a single logged set or duration.
-// From Firestore Collection: /dailySetLogs
-data class DailySetLog(
-    val id: String = "",
-    val exerciseId: String = "",
-    val date: String = "", // YYYY-MM-DD
-    val timestamp: Date = Date(),
-    val weightAdded: Double? = null,
-    val reps: Int? = null,
-    val durationSeconds: Int? = null,
-    val notes: String? = null
-)
+// --- Data Models are now defined in their own files ---
 
 class MainActivity : ComponentActivity() {
+
+    private val viewModel: DashboardViewModel by viewModels()
+
+    private val googleSignInLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(ApiException::class.java)!!
+            viewModel.signInWithGoogleCredential(account.idToken!!)
+        } catch (e: ApiException) {
+            Log.w("MainActivity", "Google sign in failed", e)
+            val errorMessage = when (e.statusCode) {
+                CommonStatusCodes.NETWORK_ERROR -> "Sign-in failed due to a network error. Please check your connection."
+                CommonStatusCodes.CANCELED -> "Sign-in was cancelled."
+                CommonStatusCodes.DEVELOPER_ERROR -> "Sign-in failed due to a developer error. Please check the configuration."
+                else -> "An unknown error occurred during sign-in."
+            }
+            viewModel.onSignInFailed(errorMessage)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // TODO: Initialize Firebase Auth and Firestore here.
-        // Per PRD 4.1, use the provided global variables for authentication.
-        // Example:
-        // val appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        // val firebaseConfig = JSON.parse(__firebase_config);
-        // ... initializeApp(firebaseConfig) ...
-
         setContent {
             GreasingTheGrooveTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    // This is the main entry point for the app's UI.
-                    GreasingTheGrooveApp()
-                }
+                GreasingTheGrooveApp(
+                    viewModel = viewModel,
+                    onSignInClick = { startGoogleSignIn() }
+                )
             }
+        }
+    }
+
+    private fun startGoogleSignIn() {
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(getString(R.string.default_web_client_id))
+            .requestEmail()
+            .build()
+
+        val googleSignInClient = GoogleSignIn.getClient(this, gso)
+        googleSignInClient.signOut().addOnCompleteListener {
+            googleSignInLauncher.launch(googleSignInClient.signInIntent)
         }
     }
 }
 
 @Composable
-fun GreasingTheGrooveApp() {
-    // For now, we'll directly show the Dashboard.
-    // In the future, you could add navigation logic here (e.g., for settings, exercise library).
-    DashboardScreen()
+fun GreasingTheGrooveApp(
+    viewModel: DashboardViewModel,
+    onSignInClick: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        if (uiState.currentUser == null) {
+            WelcomeScreen(onSignInClick = onSignInClick)
+        } else {
+            DashboardScreen(viewModel = viewModel)
+        }
+    }
+
+    uiState.signInResultMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { viewModel.clearSignInResultMessage() },
+            title = { Text("Sign-In Result") },
+            text = { Text(message) },
+            confirmButton = {
+                Button(onClick = { viewModel.clearSignInResultMessage() }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
 }
 
 @Composable
-fun DashboardScreen() {
-    // TODO: Fetch user data from Firestore here.
-    // This would include the active exercise, goal, today's progress, and streak.
-    // For now, we'll use mock data.
-    val currentStreak = 14 // Mock data
-    val setsCompleted = 6
-    val setsGoal = 10
-    val activeExerciseName = "Push-ups"
-
-    LazyColumn(
+fun WelcomeScreen(onSignInClick: () -> Unit) {
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(24.dp)
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        item {
-            // FR-3.3.1: Streak Visualization
-            StreakDisplay(streak = currentStreak)
+        Text(
+            text = "Long term consistency trumps short term intensity",
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 32.dp)
+        )
+        Button(onClick = onSignInClick) {
+            Text("Sign in with Google")
         }
-        item {
-            // This card will contain the primary logging action and progress.
-            ActiveExerciseCard(
-                exerciseName = activeExerciseName,
-                setsCompleted = setsCompleted,
-                setsGoal = setsGoal,
-                onLogSet = {
-                    // This lambda would be triggered to log a set.
-                    println("Log button clicked!")
-                    // TODO: Implement Firestore write operation for FR-3.2.1
+    }
+}
+
+@Composable
+fun DashboardScreen(
+    viewModel: DashboardViewModel = viewModel()
+) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    if (uiState.isLoading) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            item {
+                Button(onClick = { viewModel.signOut() }) {
+                    Text("Sign Out")
                 }
-            )
-        }
-        item {
-            // FR-3.3.2: Homepage Calendar View
-            ConsistencyCalendar()
-        }
-        item {
-            // FR-3.3.4: Customizable Progress Graphs
-            // Placeholder for graphs. This would be a list of user-configured graphs.
-            Text(
-                text = "Progress Graphs",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Card(modifier = Modifier.fillMaxWidth().height(200.dp)) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Text("Graph for Max Weight Added will go here.")
+            }
+            item {
+                StreakDisplay(streak = uiState.streak)
+            }
+            item {
+                ActiveExerciseCard(
+                    exerciseName = uiState.activeExerciseName,
+                    setsCompleted = uiState.setsCompleted,
+                    setsGoal = uiState.setsGoal,
+                    onLogSet = { viewModel.logSet() }
+                )
+            }
+            item {
+                ConsistencyCalendar()
+            }
+            item {
+                Text(
+                    text = "Progress Graphs",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(modifier = Modifier.fillMaxWidth().height(200.dp)) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Text("Graph for Max Weight Added will go here.")
+                    }
                 }
             }
         }
     }
 }
 
-/**
- * FR-3.3.1: Prominently displays the user's current active streak.
- */
+
 @Composable
 fun StreakDisplay(streak: Int) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -162,9 +209,6 @@ fun StreakDisplay(streak: Int) {
     }
 }
 
-/**
- * Combines the quick logging action (FR-3.2.1) and progress feedback (FR-3.2.5).
- */
 @Composable
 fun ActiveExerciseCard(
     exerciseName: String,
@@ -187,10 +231,8 @@ fun ActiveExerciseCard(
                 fontWeight = FontWeight.Bold
             )
 
-            // Progress Indicator
             GoalProgress(completed = setsCompleted, total = setsGoal)
 
-            // FR-3.2.1: Primary Logging Action
             Button(
                 onClick = onLogSet,
                 modifier = Modifier
@@ -219,16 +261,25 @@ fun GoalProgress(completed: Int, total: Int) {
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = "$completed / $total sets completed",
-            style = MaterialTheme.typography.bodyLarge
+            style = MaterialTheme. typography.bodyLarge
         )
     }
 }
 
-/**
- * FR-3.3.2: A placeholder for the interactive calendar view.
- */
 @Composable
 fun ConsistencyCalendar() {
+    val currentMonth = remember { YearMonth.now() }
+    val startMonth = remember { currentMonth.minusMonths(100) }
+    val endMonth = remember { currentMonth.plusMonths(100) }
+    val firstDayOfWeek = remember { firstDayOfWeekFromLocale() }
+
+    val state = rememberCalendarState(
+        startMonth = startMonth,
+        endMonth = endMonth,
+        firstVisibleMonth = currentMonth,
+        firstDayOfWeek = firstDayOfWeek
+    )
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = "Consistency",
@@ -238,27 +289,42 @@ fun ConsistencyCalendar() {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(300.dp)
         ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
+            Column {
+                val month = state.firstVisibleMonth.yearMonth
+                val monthTitle = month.month.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + month.year
                 Text(
-                    text = "Calendar View (W-I-P)",
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyLarge
+                    text = monthTitle,
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                HorizontalCalendar(
+                    state = state,
+                    dayContent = { day -> Day(day) },
                 )
             }
         }
     }
 }
 
+@Composable
+fun Day(day: CalendarDay) {
+    Box(
+        modifier = Modifier
+            .aspectRatio(1f),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = day.date.dayOfMonth.toString(),
+        )
+    }
+}
 
+@SuppressLint("RestrictedApi")
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
     GreasingTheGrooveTheme {
-        DashboardScreen()
+        WelcomeScreen(onSignInClick = {})
     }
 }
