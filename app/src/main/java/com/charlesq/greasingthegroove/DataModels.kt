@@ -2,27 +2,23 @@ package com.charlesq.greasingthegroove
 
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.ServerTimestamp
-import java.time.Instant
-import java.time.LocalDate
+import java.util.Date
 
 data class Exercise(
     @DocumentId val id: String = "",
     val name: String = "",
-    val exerciseMode: String = "REPS", // 'REPS' or 'DURATION'
-    val isCustom: Boolean = false,
-    val lastReps: Int? = null,
-    val lastWeightAdded: Double? = null,
-    val lastDurationSeconds: Int? = null,
-    @ServerTimestamp val dateCreated: Instant? = null
+    val exerciseMode: String = "REPS", // 'REPS' or 'ISOMETRICS'
+    val isCustom: Boolean = false
 )
 
 data class ActiveGoal(
     @DocumentId val id: String = "",
     val userId: String = "",
     val exerciseId: String = "",
-    val dailyTargetSets: Int? = null,
-    val dailyTargetDurationSeconds: Int? = null,
-    @ServerTimestamp val dateSet: Instant? = null
+    val goalFrequency: String = "DAILY", // "DAILY" or "WEEKLY"
+    val targetType: String = "SETS", // "SETS", "REPS", "SECONDS", "MINUTES"
+    val targetValue: Int = 0,
+    @ServerTimestamp val dateSet: Date? = null
 )
 
 data class DailySetLog(
@@ -30,9 +26,10 @@ data class DailySetLog(
     val userId: String = "",
     val exerciseId: String = "",
     val date: String = "", // YYYY-MM-DD
-    @ServerTimestamp val timestamp: Instant? = null,
-    val weightAdded: Double? = null,
+    @ServerTimestamp val timestamp: Date? = null,
     val reps: Int? = null,
     val durationSeconds: Int? = null,
+    val weightAdded: Double? = null,
+    val userCompletedAt: String? = null, // For user-provided time
     val notes: String? = null
 )
