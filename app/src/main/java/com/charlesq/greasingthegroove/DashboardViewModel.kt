@@ -7,29 +7,43 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 
+enum class WeightUnit {
+    LB, KG
+}
+
 data class DashboardUiState(
-    val streak: Int = 0,
-    val setsCompleted: Int = 0,
-    val goalProgress: Int = 0,
-    val goalTotal: Int = 0,
-    val goalUnits: String = "sets",
-    val activeExerciseName: String = "Loading...",
+    val setsCompletedToday: Int = 0,
     val isLoading: Boolean = true,
+    val isAuthenticating: Boolean = true,
     val currentUser: FirebaseUser? = null,
     val signInResultMessage: String? = null,
     val predefinedExercises: List<Exercise> = emptyList(),
-    val activeGoal: ActiveGoal? = null,
-    val showLogSetDialog: Boolean = false
+    val showLogSetDialog: Boolean = false,
+    val showDailyLogDialog: Boolean = false,
+    val completedSetsByDate: Map<LocalDate, List<CompletedSet>> = emptyMap(),
+    val selectedExercise: Exercise? = null,
+    val selectedExerciseLastWeight: Double? = null,
+    val lastWeights: Map<String, Double> = emptyMap(),
+    val selectedDate: LocalDate? = null,
+    val quickLogExercises: Map<Int, String> = mapOf(
+        0 to "squats",
+        1 to "pull_ups",
+        2 to "push_ups",
+        3 to "plank"
+    ),
+    val weightUnit: WeightUnit = WeightUnit.LB
 )
 
 open class DashboardViewModel : ViewModel() {
@@ -39,205 +53,235 @@ open class DashboardViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(DashboardUiState())
     open val uiState = _uiState.asStateFlow()
 
-    private val activeGoalFlow = MutableStateFlow<ActiveGoal?>(null)
-    private val exerciseFlow = MutableStateFlow<Exercise?>(null)
-    private val dailyLogsFlow = MutableStateFlow<List<DailySetLog>>(emptyList())
-
+    private val completedSetsFlow = MutableStateFlow<Map<LocalDate, List<CompletedSet>>>(emptyMap())
+    private var userPreferencesListener: ListenerRegistration? = null
+    private var completedSetsListener: ListenerRegistration? = null
     init {
+        Log.d("DashboardViewModel", "ViewModel init. Attaching AuthStateListener.")
         loadPredefinedExercises()
 
         auth.addAuthStateListener { firebaseAuth ->
             val user = firebaseAuth.currentUser
-            _uiState.update { it.copy(currentUser = user) }
+            Log.d("DashboardViewModel", "AuthStateListener fired. User: ${user?.uid}")
+            _uiState.update { it.copy(currentUser = user, isAuthenticating = false) }
+
             if (user != null) {
-                fetchData(user.uid)
+                attachDataListeners(user.uid)
             } else {
-                activeGoalFlow.value = null
-                exerciseFlow.value = null
-                dailyLogsFlow.value = emptyList()
-                _uiState.update { it.copy(isLoading = false) }
+                Log.d("DashboardViewModel", "User is null, clearing user-specific data.")
+                completedSetsFlow.value = emptyMap()
+                removeListeners()
             }
         }
 
         viewModelScope.launch {
-            combine(
-                activeGoalFlow,
-                exerciseFlow,
-                dailyLogsFlow
-            ) { activeGoal, exercise, dailyLogs ->
-                val goalTotal = activeGoal?.targetValue ?: 0
-                val (goalProgress, goalUnits) = when (activeGoal?.targetType) {
-                    "REPS" -> dailyLogs.sumOf { it.reps ?: 0 } to "reps"
-                    "SECONDS" -> dailyLogs.sumOf { it.durationSeconds ?: 0 } to "seconds"
-                    "MINUTES" -> (dailyLogs.sumOf { it.durationSeconds ?: 0 } / 60) to "minutes"
-                    else -> dailyLogs.size to "sets"
+            completedSetsFlow.collect { setsMap ->
+                val today = LocalDate.now(ZoneId.systemDefault())
+                val setsToday = setsMap[today]?.size ?: 0
+                _uiState.update {
+                    it.copy(
+                        completedSetsByDate = setsMap,
+                        setsCompletedToday = setsToday,
+                        isLoading = false
+                    )
                 }
-
-                _uiState.value.copy(
-                    streak = 0,
-                    setsCompleted = dailyLogs.size,
-                    goalProgress = goalProgress,
-                    goalTotal = goalTotal,
-                    goalUnits = goalUnits,
-                    activeExerciseName = exercise?.name ?: "No Active Goal",
-                    activeGoal = activeGoal
-                )
-            }.collect { newState ->
-                _uiState.value = newState
             }
         }
     }
 
+    private fun attachDataListeners(userId: String) {
+        // Remove existing listeners to avoid duplicates
+        removeListeners()
+
+        fetchUserPreferences(userId)
+        fetchCompletedSetsForMonth(YearMonth.now(), userId)
+    }
     private fun loadPredefinedExercises() {
         _uiState.update { it.copy(predefinedExercises = getPredefinedExercises()) }
     }
 
-    private fun fetchData(userId: String) {
-        _uiState.update { it.copy(isLoading = true) }
-        firestore.collection("activeGoals")
-            .whereEqualTo("userId", userId)
-            .orderBy("dateSet", Query.Direction.DESCENDING)
-            .limit(1)
-            .addSnapshotListener { snapshot, error ->
-                _uiState.update { it.copy(isLoading = false) }
-
+    private fun fetchUserPreferences(userId: String) {
+        userPreferencesListener = firestore.collection("users").document(userId)
+            .addSnapshotListener { document, error ->
                 if (error != null) {
-                    Log.w("DashboardViewModel", "Listen failed for active goals.", error)
+                    Log.w("DashboardViewModel", "Listen failed for user preferences.", error)
                     return@addSnapshotListener
                 }
-                val goal = snapshot?.documents?.firstOrNull()?.toObject(ActiveGoal::class.java)
-                activeGoalFlow.value = goal
 
-                if (goal != null) {
-                    fetchExercise(goal.exerciseId)
-                    fetchDailyLogs(userId, goal.exerciseId)
-                } else {
-                    exerciseFlow.value = null
-                    dailyLogsFlow.value = emptyList()
-                }
-            }
-    }
-
-    private fun fetchExercise(exerciseId: String) {
-        if (exerciseId.isBlank()) {
-            exerciseFlow.value = null
-            return
-        }
-        val predefined = _uiState.value.predefinedExercises.find { it.id == exerciseId }
-        if (predefined != null) {
-            exerciseFlow.value = predefined
-        } else {
-            firestore.collection("exercises").document(exerciseId)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        Log.w("DashboardViewModel", "Listen failed for custom exercise.", error)
-                        return@addSnapshotListener
+                if (document != null && document.exists()) {
+                    val quickLogExercisesMap = document.get("quickLogExercises") as? Map<String, String>
+                    if (quickLogExercisesMap != null) {
+                        val intKeyMap = quickLogExercisesMap.mapKeys { it.key.toInt() }
+                        _uiState.update { it.copy(quickLogExercises = intKeyMap) }
                     }
-                    exerciseFlow.value = snapshot?.toObject(Exercise::class.java)
+                    val weightUnitString = document.getString("weightUnit")
+                    if (weightUnitString != null) {
+                        _uiState.update { it.copy(weightUnit = WeightUnit.valueOf(weightUnitString)) }
+                    }
+                } else {
+                    Log.d("DashboardViewModel", "Current data: null")
                 }
+            }
+    }
+
+    fun updateQuickLogExercise(slotIndex: Int, exerciseId: String) {
+        val updatedMap = _uiState.value.quickLogExercises.toMutableMap()
+        updatedMap[slotIndex] = exerciseId
+        _uiState.update { it.copy(quickLogExercises = updatedMap) }
+        saveUserPreferences()
+    }
+
+    fun updateQuickLogExercises(updatedMap: Map<Int, String>) {
+        _uiState.update { it.copy(quickLogExercises = updatedMap) }
+        saveUserPreferences()
+    }
+
+
+    fun updateWeightUnit(weightUnit: WeightUnit) {
+        _uiState.update { it.copy(weightUnit = weightUnit) }
+        saveUserPreferences()
+    }
+
+
+    private fun saveUserPreferences() {
+        val userId = auth.currentUser?.uid
+        if (userId != null) {
+            val stringKeyMap = _uiState.value.quickLogExercises.mapKeys { it.key.toString() }
+            val preferences = mapOf(
+                "quickLogExercises" to stringKeyMap,
+                "weightUnit" to _uiState.value.weightUnit.name
+            )
+            firestore.collection("users").document(userId)
+                .set(preferences, SetOptions.merge())
         }
     }
 
-    private fun fetchDailyLogs(userId: String, exerciseId: String) {
-        val today = LocalDate.now(ZoneId.systemDefault()).toString()
-        firestore.collection("dailySetLogs")
+
+    fun fetchCompletedSetsForMonth(yearMonth: YearMonth, userId: String) {
+        val startDate = yearMonth.atDay(1).toString()
+        val endDate = yearMonth.atEndOfMonth().toString()
+
+        completedSetsListener = firestore.collection("dailySetLogs")
             .whereEqualTo("userId", userId)
-            .whereEqualTo("exerciseId", exerciseId)
-            .whereEqualTo("date", today)
+            .whereGreaterThanOrEqualTo("date", startDate)
+            .whereLessThanOrEqualTo("date", endDate)
+            .orderBy("timestamp", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    Log.w("DashboardViewModel", "Listen failed for daily logs.", error)
+                    Log.w("DashboardViewModel", "Listen failed for monthly logs.", error)
                     return@addSnapshotListener
                 }
-                dailyLogsFlow.value = snapshot?.toObjects(DailySetLog::class.java) ?: emptyList()
+                val sets = snapshot?.toObjects(CompletedSet::class.java) ?: emptyList()
+                val setsByDate = sets.groupBy { LocalDate.parse(it.date) }
+                completedSetsFlow.value = setsByDate
             }
     }
-    
-    fun onLogSetClicked() {
-        val goal = _uiState.value.activeGoal
-        if (goal?.targetType == "SETS") {
-            saveLog()
-        } else {
-            _uiState.update { it.copy(showLogSetDialog = true) }
-        }
+
+    fun onLogSetClicked(exercise: Exercise) {
+        val lastWeight = _uiState.value.lastWeights[exercise.id]
+        _uiState.update { it.copy(showLogSetDialog = true, selectedExercise = exercise, selectedExerciseLastWeight = lastWeight) }
     }
 
     fun dismissLogSetDialog() {
-        _uiState.update { it.copy(showLogSetDialog = false) }
+        _uiState.update { it.copy(showLogSetDialog = false, selectedExercise = null, selectedExerciseLastWeight = null) }
+    }
+
+    fun onDayClicked(date: LocalDate) {
+        _uiState.update { it.copy(showDailyLogDialog = true, selectedDate = date) }
+    }
+
+    fun dismissDailyLogDialog() {
+        _uiState.update { it.copy(showDailyLogDialog = false, selectedDate = null) }
     }
 
     fun saveLog(reps: Int? = null, durationSeconds: Int? = null, weightAdded: Double? = null, userCompletedAt: String? = null) {
         val userId = auth.currentUser?.uid
-        val goal = activeGoalFlow.value
-        if (userId == null || goal == null) return
+        val exercise = _uiState.value.selectedExercise
+        if (userId == null || exercise == null) {
+            Log.e("DashboardViewModel", "Cannot log set, user or exercise is null.")
+            return
+        }
+
+        var weightInLb = weightAdded
+        if (weightAdded != null && _uiState.value.weightUnit == WeightUnit.KG) {
+            weightInLb = weightAdded * 2.20462
+        }
+
+
+        if (weightInLb != null) {
+            val updatedLastWeights = _uiState.value.lastWeights.toMutableMap()
+            updatedLastWeights[exercise.id] = weightInLb
+            _uiState.update { it.copy(lastWeights = updatedLastWeights) }
+        }
 
         viewModelScope.launch {
             try {
-                val newLog = DailySetLog(
+                val today = LocalDate.now(ZoneId.systemDefault())
+                val dateString = today.toString()
+
+                val newLog = CompletedSet(
                     userId = userId,
-                    exerciseId = goal.exerciseId,
-                    date = LocalDate.now(ZoneId.systemDefault()).toString(),
+                    exerciseId = exercise.id,
+                    date = dateString,
                     reps = reps,
                     durationSeconds = durationSeconds,
-                    weightAdded = weightAdded,
+                    weightAdded = weightInLb,
                     userCompletedAt = userCompletedAt?.ifBlank { null },
-                    timestamp = null
+                    timestamp = null // Firestore will set this
                 )
+
                 firestore.collection("dailySetLogs").add(newLog).await()
+
                 dismissLogSetDialog()
+                Log.d("DashboardViewModel", "Successfully logged set.")
             } catch (e: Exception) {
-                Log.e("DashboardViewModel", "Error logging set", e)
-            }
-        }
-    }
-    
-    fun createGoal(
-        exerciseId: String,
-        goalFrequency: String,
-        targetType: String,
-        targetValue: Int
-    ) {
-        val userId = auth.currentUser?.uid ?: return
-        
-        viewModelScope.launch {
-            try {
-                val newGoal = ActiveGoal(
-                    userId = userId,
-                    exerciseId = exerciseId,
-                    goalFrequency = goalFrequency,
-                    targetType = targetType,
-                    targetValue = targetValue,
-                    dateSet = null
-                )
-                firestore.collection("activeGoals").add(newGoal).await()
-                Log.d("DashboardViewModel", "Successfully created new goal.")
-            } catch (e: Exception) {
-                Log.e("DashboardViewModel", "Error creating goal", e)
+                Log.e("DashboardViewModel", "Error in saveLog", e)
             }
         }
     }
 
     fun signInWithGoogleCredential(idToken: String) {
+        Log.d("SignIn", "signInWithGoogleCredential called with idToken: $idToken")
         viewModelScope.launch {
             try {
+                Log.d("SignIn", "Calling GoogleAuthProvider.getCredential...")
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
-                auth.signInWithCredential(credential).await()
-                _uiState.update { it.copy(signInResultMessage = "Successfully signed in!") }
+                Log.d("SignIn", "getCredential successful. Calling auth.signInWithCredential...")
+                val authResult = auth.signInWithCredential(credential).await()
+                Log.d("SignIn", "signInWithCredential successful. User: ${authResult.user?.uid}")
+                _uiState.update { it.copy(currentUser = authResult.user, signInResultMessage = "Successfully signed in!") }
             } catch (e: Exception) {
+                Log.e("SignIn", "Failed to sign in with Google credential", e)
                 _uiState.update { it.copy(signInResultMessage = "Failed to sign in: ${e.message}") }
             }
         }
     }
 
-    open fun signOut() {
+    open fun signOut(onSignedOut: () -> Unit) {
         auth.signOut()
+        onSignedOut()
     }
 
     fun onSignInFailed(errorMessage: String) {
          _uiState.update { it.copy(signInResultMessage = errorMessage) }
     }
 
+
+
     fun clearSignInResultMessage() {
         _uiState.update { it.copy(signInResultMessage = null) }
+    }
+
+    private fun removeListeners() {
+        userPreferencesListener?.remove()
+        userPreferencesListener = null
+        completedSetsListener?.remove()
+        completedSetsListener = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        removeListeners()
+        Log.d("DashboardViewModel", "ViewModel cleared and listeners removed.")
     }
 }

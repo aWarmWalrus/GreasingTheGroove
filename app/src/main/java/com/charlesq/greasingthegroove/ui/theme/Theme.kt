@@ -16,10 +16,10 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
-    primary = JapandiLightOrange,
-    onPrimary = JapandiDarkOnPrimary,
-    secondary = JapandiDarkBeige,
-    tertiary = JapandiLightBrown,
+    primary = JapandiMutedGreen,
+    onPrimary = JapandiLightText,
+    secondary = JapandiLightGray,
+    tertiary = JapandiBeige,
     background = JapandiCharcoal,
     surface = JapandiCharcoal,
     onBackground = JapandiLightText,
@@ -27,12 +27,12 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = JapandiOrange,
-    onPrimary = JapandiCream,
-    secondary = JapandiBrown,
-    tertiary = JapandiBeige,
-    background = JapandiCream,
-    surface = JapandiCream,
+    primary = JapandiMutedGreen,
+    onPrimary = JapandiDarkText,
+    secondary = JapandiBeige,
+    tertiary = JapandiLightGray,
+    background = JapandiOffWhite,
+    surface = JapandiOffWhite,
     onBackground = JapandiDarkText,
     onSurface = JapandiDarkText,
 )
