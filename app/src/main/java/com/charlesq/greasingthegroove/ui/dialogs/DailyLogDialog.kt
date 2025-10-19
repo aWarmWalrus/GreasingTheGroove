@@ -183,7 +183,7 @@ fun ExpandableLogHeader(
                 }
             }
             Icon(
-                imageVector = Icons.Diefault.ArrowDropDown,
+                imageVector = Icons.Default.ArrowDropDown,
                 contentDescription = if (isExpanded) "Collapse" else "Expand"
             )
         }
