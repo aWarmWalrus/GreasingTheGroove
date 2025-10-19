@@ -4,8 +4,10 @@ import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,13 +15,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.charlesq.greasingthegroove.CompletedSet
 import com.charlesq.greasingthegroove.DashboardViewModel
 import com.charlesq.greasingthegroove.Exercise
+import com.charlesq.greasingthegroove.MovementPattern
 import com.kizitonwose.calendar.compose.HorizontalCalendar
 import com.kizitonwose.calendar.compose.rememberCalendarState
 import com.kizitonwose.calendar.core.CalendarDay
@@ -51,11 +55,13 @@ import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.TextStyle
 import java.util.Locale
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 fun ConsistencyCalendar(
     viewModel: DashboardViewModel,
-    colorMap: Map<String, Color>,
+    colorMap: Map<MovementPattern, Color>,
     predefinedExercises: List<Exercise>
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -103,7 +109,7 @@ fun ConsistencyCalendar(
                         state.animateScrollToMonth(state.firstVisibleMonth.yearMonth.previousMonth)
                     }
                 }) {
-                    Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "Previous Month")
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous Month")
                 }
                 IconButton(onClick = {
                     Log.d("ConsistencyCalendar", "Next month button clicked")
@@ -111,7 +117,7 @@ fun ConsistencyCalendar(
                         state.animateScrollToMonth(state.firstVisibleMonth.yearMonth.nextMonth)
                     }
                 }) {
-                    Icon(Icons.Default.KeyboardArrowRight, contentDescription = "Next Month")
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next Month")
                 }
             }
         }
@@ -122,6 +128,7 @@ fun ConsistencyCalendar(
                 Day(
                     day,
                     isToday = day.date == LocalDate.now(),
+                    isPast = day.date.isBefore(LocalDate.now()),
                     sets = uiState.completedSetsByDate[day.date].orEmpty(),
                     colorMap = colorMap,
                     predefinedExercises = predefinedExercises,
@@ -139,14 +146,16 @@ fun ConsistencyCalendar(
 fun Day(
     day: CalendarDay,
     isToday: Boolean,
+    isPast: Boolean,
     sets: List<CompletedSet>,
-    colorMap: Map<String, Color>,
+    colorMap: Map<MovementPattern, Color>,
     predefinedExercises: List<Exercise>,
     onClick: () -> Unit
 ) {
     val hasSets = sets.isNotEmpty()
-    val dayBackgroundColor = if (hasSets) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
-    val dayTextColor = if (hasSets) MaterialTheme.colorScheme.onSecondaryContainer else Color.Unspecified
+    val dayHighlightColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+    val dayBackgroundColor = if (hasSets) dayHighlightColor else Color.Transparent
+    val dayTextColor = MaterialTheme.colorScheme.onSurface
 
     Box(
         modifier = Modifier
@@ -168,31 +177,67 @@ fun Day(
                 .background(dayBackgroundColor),
             contentAlignment = Alignment.Center
         ) {
-            Column(
-                modifier = Modifier.padding(vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+            val movementPatternsDoneToday = sets.map { it.exerciseId }.distinct()
+                .mapNotNull { exerciseId -> predefinedExercises.find { it.id == exerciseId }?.movementPattern }
+                .toSet()
+
+            val movementPatternOrder = listOf(
+                MovementPattern.PUSH,
+                MovementPattern.PULL,
+                MovementPattern.SQUAT,
+                MovementPattern.LUNGE,
+                MovementPattern.HINGE,
+                MovementPattern.CORE_AND_CARRY
+            )
+
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = day.date.dayOfMonth.toString(),
-                    color = dayTextColor,
-                    style = MaterialTheme.typography.bodySmall
+                    color = dayTextColor.copy(alpha = 0.5f),
+                    style = MaterialTheme.typography.labelSmall
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val exercisesDoneToday = sets.map { it.exerciseId }.distinct()
-                        .mapNotNull { exerciseId -> predefinedExercises.find { it.id == exerciseId } }
 
-                    exercisesDoneToday.take(4).forEach { exercise ->
+                val radius = minOf(maxWidth, maxHeight) / 3
+
+                if (isToday) {
+                    movementPatternOrder.forEachIndexed { index, movementPattern ->
+                        val angle = 2 * Math.PI / 6 * index
+                        val x = radius * cos(angle).toFloat()
+                        val y = radius * sin(angle).toFloat()
+                        val isDone = movementPatternsDoneToday.contains(movementPattern)
+                        val color = if (isDone) {
+                            colorMap[movementPattern] ?: Color.Transparent
+                        } else {
+                            Color.Gray.copy(alpha = 0.2f)
+                        }
+
                         Box(
                             modifier = Modifier
-                                .size(5.dp)
+                                .size(8.dp)
+                                .offset(x, y)
                                 .clip(CircleShape)
-                                .background(colorMap[exercise.name] ?: Color.Transparent)
+                                .background(color)
                         )
+                    }
+                } else if (isPast) {
+                    movementPatternOrder.forEachIndexed { index, movementPattern ->
+                        if (movementPatternsDoneToday.contains(movementPattern)) {
+                            val angle = 2 * Math.PI / 6 * index
+                            val x = radius * cos(angle).toFloat()
+                            val y = radius * sin(angle).toFloat()
+                            val color = colorMap[movementPattern] ?: Color.Transparent
+
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .offset(x, y)
+                                    .clip(CircleShape)
+                                    .background(color)
+                            )
+                        }
                     }
                 }
             }

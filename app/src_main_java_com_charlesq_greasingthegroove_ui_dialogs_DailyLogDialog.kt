@@ -19,11 +19,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -36,10 +34,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -47,8 +45,8 @@ import com.charlesq.greasingthegroove.CompletedSet
 import com.charlesq.greasingthegroove.DashboardViewModel
 import com.charlesq.greasingthegroove.Exercise
 import com.charlesq.greasingthegroove.WeightUnit
+import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
-import kotlin.math.floor
 
 @Composable
 fun DailyLogDialog(
@@ -76,16 +74,6 @@ fun DailyLogDialog(
             },
             onDismiss = { dialogViewModel.onDeletionCancelled() }
         )
-    }
-
-    if (dialogUiState.setToBeEdited != null) {
-        dialogUiState.setToBeEdited?.let {
-            dashboardViewModel.onLogSetClicked(
-                exercise = predefinedExercises[it.exerciseId],
-                set = it
-            )
-        }
-        dialogViewModel.onEditConfirmed()
     }
 
     if (selectedDate != null) {
@@ -126,8 +114,7 @@ fun DailyLogDialog(
                                             LogSetItem(
                                                 set = set,
                                                 weightUnit = weightUnit,
-                                                onDelete = { dialogViewModel.onDeletionInitiated(set) },
-                                                onEdit = { dialogViewModel.onEditInitiated(set) }
+                                                onDelete = { dialogViewModel.onDeletionInitiated(set) }
                                             )
                                         }
                                     }
@@ -177,93 +164,70 @@ fun ExpandableLogHeader(
                             Text("Reps: $it", style = MaterialTheme.typography.bodySmall)
                         }
                         stats.totalDuration?.let {
-                            Text("Duration: ${formatDuration(it)}", style = MaterialTheme.typography.bodySmall)
+                            Text("Duration: ${it}s", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
             }
             Icon(
-                imageVector = Icons.Diefault.ArrowDropDown,
+                imageVector = Icons.Default.ArrowDropDown,
                 contentDescription = if (isExpanded) "Collapse" else "Expand"
             )
         }
     }
 }
 
-fun formatDuration(duration: Double): String {
-    return if (duration < 120) {
-        "${duration.toInt()}s"
-    } else {
-        val minutes = floor(duration / 60).toInt()
-        val seconds = (duration % 60).toInt()
-        "${minutes}m ${seconds}s"
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LogSetItem(set: CompletedSet, weightUnit: WeightUnit, onDelete: () -> Unit, onEdit: () -> Unit) {
+fun LogSetItem(set: CompletedSet, weightUnit: WeightUnit, onDelete: () -> Unit) {
+    val scope = rememberCoroutineScope()
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = {
-            when (it) {
-                SwipeToDismissBoxValue.EndToStart -> onDelete()
-                SwipeToDismissBoxValue.StartToEnd -> onEdit()
-                SwipeToDismissBoxValue.Settled -> {}
+            if (it == SwipeToDismissBoxValue.EndToStart) {
+                onDelete()
+                true
+            } else {
+                false
             }
-            false
         },
-        positionalThreshold = { it * 0.75f }
+        positionalThreshold = { it * .25f }
     )
+
+    LaunchedEffect(dismissState.currentValue) {
+        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled) {
+            scope.launch {
+                dismissState.reset()
+            }
+        }
+    }
 
     SwipeToDismissBox(
         state = dismissState,
-        modifier = Modifier.padding(vertical = 4.dp),
+        enableDismissFromStartToEnd = false,
         backgroundContent = {
-            val direction = dismissState.dismissDirection
-            val color = when (direction) {
-                SwipeToDismissBoxValue.EndToStart -> lerp(
-                    start = Color.Transparent,
-                    stop = Color.Red,
-                    fraction = dismissState.progress
-                )
-                SwipeToDismissBoxValue.StartToEnd -> lerp(
-                    start = Color.Transparent,
-                    stop = Color.Green,
-                    fraction = dismissState.progress
-                )
+            val color = when (dismissState.targetValue) {
+                SwipeToDismissBoxValue.EndToStart -> Color.Red.copy(alpha = 0.8f)
                 else -> Color.Transparent
             }
-            val alignment = when (direction) {
-                SwipeToDismissBoxValue.EndToStart -> Alignment.CenterEnd
-                SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
-                else -> Alignment.Center
-            }
-            val icon = when (direction) {
-                SwipeToDismissBoxValue.EndToStart -> Icons.Default.Delete
-                SwipeToDismissBoxValue.StartToEnd -> Icons.Default.Edit
-                else -> null
-            }
-
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(color, shape = CardDefaults.shape)
+                    .background(color)
                     .padding(horizontal = 20.dp),
-                contentAlignment = alignment
+                contentAlignment = Alignment.CenterEnd
             ) {
-                icon?.let {
-                    Icon(
-                        it,
-                        contentDescription = "Action",
-                        tint = Color.White
-                    )
-                }
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete",
+                    tint = Color.White
+                )
             }
         }
     ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(vertical = 4.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -278,7 +242,7 @@ fun LogSetItem(set: CompletedSet, weightUnit: WeightUnit, onDelete: () -> Unit, 
                         Text("Reps: ${set.reps}", style = MaterialTheme.typography.bodyLarge)
                     }
                     if (set.durationSeconds != null) {
-                        Text("Duration: ${String.format("%.1f", set.durationSeconds)}s", style = MaterialTheme.typography.bodyLarge)
+                        Text("Duration: ${set.durationSeconds}s", style = MaterialTheme.typography.bodyLarge)
                     }
                     if (set.weightAdded != null) {
                         val displayWeight = if (weightUnit == WeightUnit.KG) {

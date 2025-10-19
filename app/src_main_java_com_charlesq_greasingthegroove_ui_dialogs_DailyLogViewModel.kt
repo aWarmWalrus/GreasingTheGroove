@@ -10,15 +10,14 @@ import kotlinx.coroutines.flow.update
 data class ExerciseStats(
     val totalSets: Int,
     val totalReps: Int?,
-    val totalDuration: Double?
+    val totalDuration: Int?
 )
 
 data class DailyLogUiState(
     val setsByExercise: Map<Exercise?, List<CompletedSet>> = emptyMap(),
     val expandedExerciseId: String? = null,
     val exerciseStats: Map<String, ExerciseStats> = emptyMap(),
-    val setToBeDeleted: CompletedSet? = null,
-    val setToBeEdited: CompletedSet? = null
+    val setToBeDeleted: CompletedSet? = null
 )
 
 class DailyLogViewModel : ViewModel() {
@@ -37,7 +36,7 @@ class DailyLogViewModel : ViewModel() {
             exercise?.let {
                 val totalSets = sets.size
                 val totalReps = if (sets.any { it.reps != null }) sets.sumOf { it.reps ?: 0 } else null
-                val totalDuration = if (sets.any { it.durationSeconds != null }) sets.sumOf { it.durationSeconds ?: 0.0 } else null
+                val totalDuration = if (sets.any { it.durationSeconds != null }) sets.sumOf { it.durationSeconds ?: 0 } else null
                 it.id to ExerciseStats(totalSets, totalReps, totalDuration)
             }
         }.toMap()
@@ -65,17 +64,5 @@ class DailyLogViewModel : ViewModel() {
 
     fun onDeletionConfirmed() {
         _uiState.update { it.copy(setToBeDeleted = null) }
-    }
-
-    fun onEditInitiated(set: CompletedSet) {
-        _uiState.update { it.copy(setToBeEdited = set) }
-    }
-
-    fun onEditCancelled() {
-        _uiState.update { it.copy(setToBeEdited = null) }
-    }
-
-    fun onEditConfirmed() {
-        _uiState.update { it.copy(setToBeEdited = null) }
     }
 }

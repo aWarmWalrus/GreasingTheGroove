@@ -10,10 +10,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,23 +32,31 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.charlesq.greasingthegroove.DashboardViewModel
+import com.charlesq.greasingthegroove.SettingsViewModel
 import com.charlesq.greasingthegroove.WeightUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    viewModel: DashboardViewModel,
+    dashboardViewModel: DashboardViewModel,
+    settingsViewModel: SettingsViewModel = viewModel(),
     onNavigateBack: () -> Unit,
     onSignOut: () -> Unit
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val dashboardUiState by dashboardViewModel.uiState.collectAsState()
+    val theme by settingsViewModel.theme.collectAsState()
+
     var showSignOutDialog by remember { mutableStateOf(false) }
     var showUnsavedChangesDialog by remember { mutableStateOf(false) }
-    var tempWeightUnit by remember { mutableStateOf(uiState.weightUnit) }
+    var tempWeightUnit by remember(dashboardUiState.weightUnit) { mutableStateOf(dashboardUiState.weightUnit) }
+    var tempTheme by remember(theme) { mutableStateOf(theme) }
+
+    val hasChanges = tempWeightUnit != dashboardUiState.weightUnit || tempTheme != theme
 
     fun handleBackPress() {
-        if (tempWeightUnit != uiState.weightUnit) {
+        if (hasChanges) {
             showUnsavedChangesDialog = true
         } else {
             onNavigateBack()
@@ -61,19 +69,8 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showUnsavedChangesDialog = false },
             title = { Text("Unsaved Changes") },
-            text = { Text("You have unsaved changes. What would you like to do?") },
+            text = { Text("You have unsaved changes. Are you sure you want to discard them?") },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.updateWeightUnit(tempWeightUnit)
-                        showUnsavedChangesDialog = false
-                        onNavigateBack()
-                    }
-                ) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
                 Button(
                     onClick = {
                         showUnsavedChangesDialog = false
@@ -81,6 +78,15 @@ fun SettingsScreen(
                     }
                 ) {
                     Text("Discard")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showUnsavedChangesDialog = false
+                    }
+                ) {
+                    Text("Cancel")
                 }
             },
             modifier = Modifier.padding(16.dp)
@@ -117,14 +123,18 @@ fun SettingsScreen(
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = { handleBackPress() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    TextButton(onClick = {
-                        viewModel.updateWeightUnit(tempWeightUnit)
-                        onNavigateBack()
-                    }) {
+                    TextButton(
+                        onClick = {
+                            dashboardViewModel.updateWeightUnit(tempWeightUnit)
+                            settingsViewModel.setTheme(tempTheme)
+                            onNavigateBack()
+                        },
+                        enabled = hasChanges
+                    ) {
                         Text("Save")
                     }
                 }
@@ -140,7 +150,7 @@ fun SettingsScreen(
             Column(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Divider()
+                HorizontalDivider()
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
                     Text(
                         "Weight Unit",
@@ -170,7 +180,38 @@ fun SettingsScreen(
                         }
                     }
                 }
-                Divider()
+                HorizontalDivider()
+                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    Text(
+                        "Theme",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        val themes = listOf("Light", "Dark", "System")
+                        themes.forEach { themeValue ->
+                            Row(
+                                modifier = Modifier
+                                    .selectable(
+                                        selected = (themeValue == tempTheme),
+                                        onClick = { tempTheme = themeValue }
+                                    )
+                                    .weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = (themeValue == tempTheme),
+                                    onClick = { tempTheme = themeValue }
+                                )
+                                Text(text = themeValue)
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider()
             }
             Button(
                 onClick = { showSignOutDialog = true },

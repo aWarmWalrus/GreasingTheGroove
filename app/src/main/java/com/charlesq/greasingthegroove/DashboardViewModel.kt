@@ -34,6 +34,7 @@ data class DashboardUiState(
     val showDailyLogDialog: Boolean = false,
     val completedSetsByDate: Map<LocalDate, List<CompletedSet>> = emptyMap(),
     val selectedExercise: Exercise? = null,
+    val setToBeEdited: CompletedSet? = null,
     val selectedExerciseLastWeight: Double? = null,
     val lastWeights: Map<String, Double> = emptyMap(),
     val selectedDate: LocalDate? = null,
@@ -41,7 +42,9 @@ data class DashboardUiState(
         0 to "squats",
         1 to "pull_ups",
         2 to "push_ups",
-        3 to "plank"
+        3 to "plank",
+        4 to "lunges",
+        5 to "glute_bridges"
     ),
     val weightUnit: WeightUnit = WeightUnit.LB
 )
@@ -161,6 +164,7 @@ open class DashboardViewModel : ViewModel() {
         val startDate = yearMonth.atDay(1).toString()
         val endDate = yearMonth.atEndOfMonth().toString()
 
+        completedSetsListener?.remove()
         completedSetsListener = firestore.collection("dailySetLogs")
             .whereEqualTo("userId", userId)
             .whereGreaterThanOrEqualTo("date", startDate)
@@ -173,17 +177,34 @@ open class DashboardViewModel : ViewModel() {
                 }
                 val sets = snapshot?.toObjects(CompletedSet::class.java) ?: emptyList()
                 val setsByDate = sets.groupBy { LocalDate.parse(it.date) }
-                completedSetsFlow.value = setsByDate
+                val currentSets = completedSetsFlow.value.toMutableMap()
+                currentSets.putAll(setsByDate)
+                completedSetsFlow.value = currentSets
             }
     }
 
-    fun onLogSetClicked(exercise: Exercise) {
+    fun onLogSetClicked(exercise: Exercise?, set: CompletedSet? = null) {
+        if (exercise == null) return
         val lastWeight = _uiState.value.lastWeights[exercise.id]
-        _uiState.update { it.copy(showLogSetDialog = true, selectedExercise = exercise, selectedExerciseLastWeight = lastWeight) }
+        _uiState.update {
+            it.copy(
+                showLogSetDialog = true,
+                selectedExercise = exercise,
+                setToBeEdited = set,
+                selectedExerciseLastWeight = lastWeight
+            )
+        }
     }
 
     fun dismissLogSetDialog() {
-        _uiState.update { it.copy(showLogSetDialog = false, selectedExercise = null, selectedExerciseLastWeight = null) }
+        _uiState.update {
+            it.copy(
+                showLogSetDialog = false,
+                selectedExercise = null,
+                setToBeEdited = null,
+                selectedExerciseLastWeight = null
+            )
+        }
     }
 
     fun onDayClicked(date: LocalDate) {
@@ -194,7 +215,7 @@ open class DashboardViewModel : ViewModel() {
         _uiState.update { it.copy(showDailyLogDialog = false, selectedDate = null) }
     }
 
-    fun saveLog(reps: Int? = null, durationSeconds: Int? = null, weightAdded: Double? = null, userCompletedAt: String? = null) {
+    fun saveLog(reps: Int? = null, durationSeconds: Double? = null, weightAdded: Double? = null, userCompletedAt: String? = null) {
         val userId = auth.currentUser?.uid
         val exercise = _uiState.value.selectedExercise
         if (userId == null || exercise == null) {
@@ -236,6 +257,61 @@ open class DashboardViewModel : ViewModel() {
                 Log.d("DashboardViewModel", "Successfully logged set.")
             } catch (e: Exception) {
                 Log.e("DashboardViewModel", "Error in saveLog", e)
+            }
+        }
+    }
+
+    fun updateLog(reps: Int? = null, durationSeconds: Double? = null, weightAdded: Double? = null, userCompletedAt: String? = null) {
+        val setToBeEdited = _uiState.value.setToBeEdited ?: return
+        val exercise = _uiState.value.selectedExercise ?: return
+
+        var weightInLb = weightAdded
+        if (weightAdded != null && _uiState.value.weightUnit == WeightUnit.KG) {
+            weightInLb = weightAdded * 2.20462
+        }
+
+        val updatedSet = setToBeEdited.copy(
+            reps = reps,
+            durationSeconds = durationSeconds,
+            weightAdded = weightInLb,
+            userCompletedAt = userCompletedAt?.ifBlank { null }
+        )
+
+        viewModelScope.launch {
+            try {
+                firestore.collection("dailySetLogs").document(setToBeEdited.id).set(updatedSet).await()
+                dismissLogSetDialog()
+                Log.d("DashboardViewModel", "Successfully updated set.")
+            } catch (e: Exception) {
+                Log.e("DashboardViewModel", "Error updating set", e)
+            }
+        }
+    }
+
+    fun deleteSet(set: CompletedSet) {
+        if (set.id.isBlank()) {
+            Log.e("DashboardViewModel", "Cannot delete set, document ID is missing.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                firestore.collection("dailySetLogs").document(set.id).delete().await()
+                Log.d("DashboardViewModel", "Successfully deleted set from Firestore.")
+
+                val currentSets = completedSetsFlow.value.toMutableMap()
+                val date = LocalDate.parse(set.date)
+                val setsForDate = currentSets[date]?.toMutableList()
+                if (setsForDate != null) {
+                    setsForDate.remove(set)
+                    if (setsForDate.isEmpty()) {
+                        currentSets.remove(date)
+                    } else {
+                        currentSets[date] = setsForDate
+                    }
+                    completedSetsFlow.value = currentSets
+                }
+            } catch (e: Exception) {
+                Log.e("DashboardViewModel", "Error deleting set", e)
             }
         }
     }

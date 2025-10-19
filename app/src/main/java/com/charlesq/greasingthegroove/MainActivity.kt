@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
@@ -43,16 +44,24 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: DashboardViewModel by viewModels()
+    private val dashboardViewModel: DashboardViewModel by viewModels()
+    private val settingsViewModel: SettingsViewModel by viewModels()
     private lateinit var credentialManager: CredentialManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         credentialManager = CredentialManager.create(this)
         setContent {
-            GreasingTheGrooveTheme {
+            val theme by settingsViewModel.theme.collectAsState()
+            val useDarkTheme = when (theme) {
+                "Light" -> false
+                "Dark" -> true
+                else -> isSystemInDarkTheme()
+            }
+
+            GreasingTheGrooveTheme(darkTheme = useDarkTheme) {
                 val coroutineScope = rememberCoroutineScope()
-                val uiState by viewModel.uiState.collectAsState()
+                val uiState by dashboardViewModel.uiState.collectAsState()
 
                 GreasingTheGrooveApp(
                     uiState = uiState,
@@ -62,13 +71,13 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onSignOutClick = {
-                        viewModel.signOut {
+                        dashboardViewModel.signOut {
                             coroutineScope.launch {
                                 credentialManager.clearCredentialState(ClearCredentialStateRequest())
                             }
                         }
                     },
-                    onClearSignInResultMessage = { viewModel.clearSignInResultMessage() }
+                    onClearSignInResultMessage = { dashboardViewModel.clearSignInResultMessage() }
                 )
             }
         }
@@ -97,7 +106,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                     Log.d("SignIn", "Successfully created GoogleIdTokenCredential. Calling viewModel to sign in.")
-                    viewModel.signInWithGoogleCredential(googleIdTokenCredential.idToken)
+                    dashboardViewModel.signInWithGoogleCredential(googleIdTokenCredential.idToken)
                 } catch (e: Exception) {
                     Log.e("SignIn", "Exception while creating GoogleIdTokenCredential", e)
                 }
@@ -139,9 +148,9 @@ fun GreasingTheGrooveApp(
                     )
                 }
                 composable("settings") {
-                    val viewModel: DashboardViewModel = viewModel()
+                    val dashboardViewModel: DashboardViewModel = viewModel()
                     SettingsScreen(
-                        viewModel = viewModel,
+                        dashboardViewModel = dashboardViewModel,
                         onNavigateBack = { navController.popBackStack() },
                         onSignOut = onSignOutClick
                     )
@@ -161,15 +170,8 @@ fun GreasingTheGrooveApp(
                 ) { backStackEntry ->
                     val slotIndex = backStackEntry.arguments?.getInt("slotIndex") ?: -1
                     ExercisePickerScreen(
-                        onExerciseSelected = { exerciseId ->
-                            navController.previousBackStackEntry
-                                ?.savedStateHandle
-                                ?.set("selectedExerciseId", exerciseId)
-                            navController.previousBackStackEntry
-                                ?.savedStateHandle
-                                ?.set("slotIndex", slotIndex)
-                            navController.popBackStack()
-                        }
+                        navController = navController,
+                        slotIndex = slotIndex
                     )
                 }
             }

@@ -1,74 +1,95 @@
 package com.charlesq.greasingthegroove
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material3.Card
-import androidx.compose.material3.Divider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.charlesq.greasingthegroove.MetricType
+import androidx.navigation.NavController
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExercisePickerScreen(
-    onExerciseSelected: (String) -> Unit,
+    navController: NavController,
+    slotIndex: Int,
     viewModel: ExercisePickerViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    Scaffold { paddingValues ->
-        LazyColumn(modifier = Modifier.padding(paddingValues)) {
-            item {
-                Text(
-                    "Select an Exercise",
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.padding(16.dp)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Select Exercise") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp)
+        ) {
+            TextField(
+                value = uiState.searchQuery,
+                onValueChange = { viewModel.onSearchQueryChanged(it) },
+                label = { Text("Search") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterDropdown(
+                    options = MovementPattern.values().map { it.name.replace('_', ' ') },
+                    selectedOption = uiState.selectedMovementPattern?.name?.replace('_', ' '),
+                    onOptionSelected = {
+                        val movementPattern = if (it != null) MovementPattern.valueOf(it.replace(' ', '_')) else null
+                        viewModel.onMovementPatternChanged(movementPattern)
+                    },
+                    label = "Movement",
+                    modifier = Modifier.weight(1f)
+                )
+                FilterDropdown(
+                    options = BodyPart.values().map { it.name.replace('_', ' ') },
+                    selectedOption = uiState.selectedBodyPart?.name?.replace('_', ' '),
+                    onOptionSelected = {
+                        val bodyPart = if (it != null) BodyPart.valueOf(it.replace(' ', '_')) else null
+                        viewModel.onBodyPartChanged(bodyPart)
+                    },
+                    label = "Body Part",
+                    modifier = Modifier.weight(1f)
                 )
             }
-            uiState.exercisesByMetric.forEach { (metric, exercises) ->
-                item {
-                    ExpandableExerciseHeader(
-                        metric = metric,
-                        isExpanded = uiState.expandedMetric == metric,
-                        onClick = { viewModel.onMetricClicked(metric) }
-                    )
-                }
-                item {
-                    AnimatedVisibility(
-                        visible = uiState.expandedMetric == metric,
-                        enter = expandVertically(),
-                        exit = shrinkVertically()
-                    ) {
-                        Column {
-                            exercises.forEach { exercise ->
-                                ExerciseListItem(
-                                    exercise = exercise,
-                                    onClick = { onExerciseSelected(exercise.id) }
-                                )
-                            }
+            Spacer(modifier = Modifier.height(16.dp))
+            LazyColumn(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(uiState.exercises) { exercise ->
+                    ExerciseListItem(
+                        exercise = exercise,
+                        onClick = {
+                            navController.previousBackStackEntry
+                                ?.savedStateHandle
+                                ?.set("selectedExerciseId", exercise.id)
+                            navController.previousBackStackEntry
+                                ?.savedStateHandle
+                                ?.set("slotIndex", slotIndex)
+                            navController.popBackStack()
                         }
-                    }
+                    )
                 }
             }
         }
@@ -76,30 +97,40 @@ fun ExercisePickerScreen(
 }
 
 @Composable
-fun ExpandableExerciseHeader(
-    metric: MetricType,
-    isExpanded: Boolean,
-    onClick: () -> Unit
+fun FilterDropdown(
+    options: List<String>,
+    selectedOption: String?,
+    onOptionSelected: (String?) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = modifier) {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text(selectedOption ?: label)
+            Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
         ) {
-            Text(metric.displayName, style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.weight(1f))
-            Icon(
-                imageVector = Icons.Default.ArrowDropDown,
-                contentDescription = if (isExpanded) "Collapse" else "Expand",
-                modifier = Modifier.padding(start = 8.dp)
+            DropdownMenuItem(
+                text = { Text("All") },
+                onClick = {
+                    onOptionSelected(null)
+                    expanded = false
+                }
             )
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onOptionSelected(option)
+                        expanded = false
+                    }
+                )
+            }
         }
     }
 }
@@ -109,12 +140,13 @@ fun ExerciseListItem(
     exercise: Exercise,
     onClick: () -> Unit
 ) {
-    Column(modifier = Modifier
-        .fillMaxWidth()
-        .clickable(onClick = onClick)
-        .padding(horizontal = 32.dp, vertical = 16.dp)
-    ) {
-        Text(exercise.name, style = MaterialTheme.typography.bodyLarge)
-        Divider(modifier = Modifier.padding(top = 16.dp))
-    }
+    ListItem(
+        headlineContent = { Text(exercise.name) },
+        supportingContent = {
+            Text(
+                "Movement: ${exercise.movementPattern?.name?.replace('_', ' ')}, Target: ${exercise.primaryTarget?.name?.replace('_', ' ')}"
+            )
+        },
+        modifier = Modifier.clickable(onClick = onClick)
+    )
 }
